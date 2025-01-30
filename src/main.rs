@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::Result;
 
+use rayon::prelude::*;
+
 fn nanos() -> u128 {
     let start = SystemTime::now();
     let since_the_epoch = start
@@ -13,19 +15,30 @@ fn nanos() -> u128 {
     since_the_epoch.as_nanos()
 }
 
+//const MAX_PACKET_SIZE: usize = 8972; //65507;
+const MAX_PACKET_SIZE: usize = 65507;
+
+const TEST_ITERS: u128 = 100;
+
 fn main() -> Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:2000")?;
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    loop {
-        let mut buf = [0; std::mem::size_of::<u128>()];
-        let (len, src) = socket.recv_from(&mut buf)?;
-        let current_nanos = nanos();
+    let pixel_bytes = (1024 * 512 * 3) as u32;
+    let required_packages = pixel_bytes.div_ceil(MAX_PACKET_SIZE as u32);
 
-        let client_nanos = *bytemuck::from_bytes::<u128>(&buf);
+    let nanos = (0..TEST_ITERS)
+        .collect::<Vec<u128>>()
+        .par_iter()
+        .map(|i| {
+            let mut buf = [0u8; MAX_PACKET_SIZE];
 
-        let elapsed_nanos = current_nanos - client_nanos;
-        println!("Elapsed {}ns", elapsed_nanos);
-    }
+            for _ in 0..required_packages {
+                socket
+                    .send_to(&buf, "169.254.187.239:2000")
+                    .expect("Error on send");
+            }
+        })
+        .collect::<Vec<_>>();
 
     Ok(())
 }
