@@ -346,22 +346,22 @@ impl Socket {
     ) -> Result<()> {
         let mut buf = vec![0u8; u16::MAX as usize];
 
-        if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
-            if len > 0 {
-                if let Ok(_len) = connection.tcp_stream.read(&mut buf) {
-                    let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
-                    timeframe.store(barrier_timeframe, Ordering::SeqCst);
+        //if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
+        //    if len > 0 {
+        if let Ok(len) = connection.tcp_stream.read(&mut buf) {
+            let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
+            timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
-                    let packet = Packet {
-                        addr: connection.tcp_stream.peer_addr().unwrap(),
-                        payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
-                        ty: PacketType::Barrier,
-                    };
+            let packet = Packet {
+                addr: connection.tcp_stream.peer_addr().unwrap(),
+                payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
+                ty: PacketType::Barrier,
+            };
 
-                    event_sender.try_send(SocketEvent::Packet(packet))?;
-                }
-            }
+            event_sender.try_send(SocketEvent::Packet(packet))?;
         }
+        //}
+        //}
 
         Ok(())
     }
