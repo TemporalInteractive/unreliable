@@ -48,7 +48,11 @@ impl Packet {
     }
 
     pub fn payload(&self) -> &[u8] {
-        &self.payload
+        &self.payload[0..(self.payload.len() - 4)]
+    }
+
+    pub fn timeframe(&self) -> u32 {
+        *bytemuck::from_bytes::<u32>(&self.payload[(self.payload.len() - 4)..self.payload.len()])
     }
 }
 
@@ -75,10 +79,10 @@ impl PacketSender {
         Ok(())
     }
 
-    pub fn send_barrier(&mut self, addr: SocketAddr) -> Result<()> {
-        let timeframe = self.timeframe.fetch_add(1, Ordering::SeqCst) + 1;
+    pub fn send_barrier(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
+        let timeframe = self.timeframe.load(Ordering::SeqCst);
 
-        let payload = bytemuck::bytes_of(&timeframe).to_vec();
+        payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::barrier(addr, payload);
 
         self.packet_sender.try_send(packet)?;
@@ -106,6 +110,7 @@ impl Connection {
 pub struct Socket {
     packet_sender: PacketSender,
     event_receiver: Receiver<SocketEvent>,
+    timeframe: Arc<AtomicU32>,
 }
 
 impl Socket {
@@ -153,6 +158,7 @@ impl Socket {
         let receive_barriers_timeframe = timeframe.clone();
         let receive_barriers_received_connections = received_connections.clone();
         let receive_barriers_established_connection = established_connection.clone();
+        let receive_barriers_event_sender = event_sender.clone();
         thread::Builder::new()
             .name("Unreliable - Receive Barriers".to_owned())
             .spawn(move || {
@@ -160,6 +166,7 @@ impl Socket {
                     receive_barriers_timeframe,
                     receive_barriers_received_connections,
                     receive_barriers_established_connection,
+                    receive_barriers_event_sender,
                 )
             })
             .unwrap();
@@ -182,11 +189,12 @@ impl Socket {
             .spawn(move || Self::listen(listen_port, received_connections, event_sender).unwrap())
             .unwrap();
 
-        let packet_sender = PacketSender::new(packet_sender, timeframe);
+        let packet_sender = PacketSender::new(packet_sender, timeframe.clone());
 
         Ok(Self {
             packet_sender,
             event_receiver,
+            timeframe,
         })
     }
 
@@ -196,6 +204,10 @@ impl Socket {
 
     pub fn event_receiver(&mut self) -> &mut Receiver<SocketEvent> {
         &mut self.event_receiver
+    }
+
+    pub fn barrier(&mut self) -> Arc<AtomicU32> {
+        self.timeframe.clone()
     }
 
     // Try to connect to our target address
@@ -327,33 +339,48 @@ impl Socket {
         }
     }
 
-    fn receive_barrier(connection: &mut Connection, timeframe: &Arc<AtomicU32>) {
+    fn receive_barrier(
+        connection: &mut Connection,
+        timeframe: &Arc<AtomicU32>,
+        event_sender: &mut Sender<SocketEvent>,
+    ) -> Result<()> {
         let mut buf = [0u8; 4];
         if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
             if len > 0 {
                 if let Ok(_len) = connection.tcp_stream.read(&mut buf) {
                     let barrier_timeframe = *bytemuck::from_bytes::<u32>(buf.as_ref());
                     timeframe.store(barrier_timeframe, Ordering::SeqCst);
+
+                    let packet = Packet {
+                        addr: connection.tcp_stream.peer_addr().unwrap(),
+                        payload: Box::new(buf),
+                        ty: PacketType::Barrier,
+                    };
+
+                    event_sender.try_send(SocketEvent::Packet(packet))?;
                 }
             }
         }
+
+        Ok(())
     }
 
     fn receive_barriers(
         timeframe: Arc<AtomicU32>,
         received_connections: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
         established_connection: Arc<Mutex<Option<Connection>>>,
-    ) {
+        mut event_sender: Sender<SocketEvent>,
+    ) -> Result<()> {
         loop {
             if let Ok(mut received_connections) = received_connections.lock() {
                 for connection in received_connections.values_mut() {
-                    Self::receive_barrier(connection, &timeframe);
+                    Self::receive_barrier(connection, &timeframe, &mut event_sender)?;
                 }
             }
 
             if let Ok(mut established_connection) = established_connection.lock() {
                 if let Some(connection) = established_connection.as_mut() {
-                    Self::receive_barrier(connection, &timeframe);
+                    Self::receive_barrier(connection, &timeframe, &mut event_sender)?;
                 }
             }
 
