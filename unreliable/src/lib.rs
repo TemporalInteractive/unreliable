@@ -88,6 +88,7 @@ struct Connection {
 
 impl Connection {
     fn new(tcp_stream: TcpStream) -> Self {
+        tcp_stream.set_nonblocking(true).unwrap();
         Self { tcp_stream }
     }
 }
@@ -111,40 +112,54 @@ impl Socket {
             let connect_addr = addr;
             let connect_established_connection = established_connection.clone();
             let connect_event_sender = event_sender.clone();
-            thread::spawn(move || {
-                Self::connect(
-                    connect_addr,
-                    connect_established_connection,
-                    connect_event_sender,
-                )
-            });
+            thread::Builder::new()
+                .name("Unreliable - Connect".to_owned())
+                .spawn(move || {
+                    Self::connect(
+                        connect_addr,
+                        connect_established_connection,
+                        connect_event_sender,
+                    )
+                    .unwrap()
+                })
+                .unwrap();
         }
 
         let send_packets_event_sender = event_sender.clone();
         let send_packets_received_connections = received_connections.clone();
         let send_packets_established_connection = established_connection.clone();
-        thread::spawn(move || {
-            Self::send_packets(
-                packet_receiver,
-                send_packets_event_sender,
-                send_packets_received_connections,
-                send_packets_established_connection,
-            )
-        });
+        thread::Builder::new()
+            .name("Unreliable - Send Packets".to_owned())
+            .spawn(move || {
+                Self::send_packets(
+                    packet_receiver,
+                    send_packets_event_sender,
+                    send_packets_received_connections,
+                    send_packets_established_connection,
+                )
+                .unwrap()
+            })
+            .unwrap();
 
         let receive_barriers_timeframe = timeframe.clone();
         let receive_barriers_received_connections = received_connections.clone();
         let receive_barriers_established_connection = established_connection.clone();
-        thread::spawn(move || {
-            Self::receive_barriers(
-                receive_barriers_timeframe,
-                receive_barriers_received_connections,
-                receive_barriers_established_connection,
-            )
-        });
+        thread::Builder::new()
+            .name("Unreliable - Receive Barriers".to_owned())
+            .spawn(move || {
+                Self::receive_barriers(
+                    receive_barriers_timeframe,
+                    receive_barriers_received_connections,
+                    receive_barriers_established_connection,
+                )
+            })
+            .unwrap();
 
         let listen_port = addr.port();
-        thread::spawn(move || Self::listen(listen_port, received_connections, event_sender));
+        thread::Builder::new()
+            .name("Unreliable - Listen".to_owned())
+            .spawn(move || Self::listen(listen_port, received_connections, event_sender).unwrap())
+            .unwrap();
 
         let packet_sender = PacketSender::new(packet_sender);
 
@@ -172,13 +187,16 @@ impl Socket {
             if let Ok(mut connection) = established_connection.lock() {
                 if connection.is_none() {
                     // Try to connect if we're not connected yet
-                    if let Ok(tcp_stream) = TcpStream::connect(addr) {
+                    if let Ok(tcp_stream) =
+                        TcpStream::connect_timeout(&addr, Duration::from_millis(100))
+                    {
                         *connection = Some(Connection::new(tcp_stream));
                         event_sender.try_send(SocketEvent::Connect(addr))?;
                     }
                 }
             }
 
+            thread::yield_now();
             thread::sleep(Duration::from_millis(100));
         }
     }
@@ -235,6 +253,7 @@ impl Socket {
                             }
                             // Barriers go over tcp
                             PacketType::Barrier => {
+                                println!("SEND BARRIER");
                                 if let Some(connection) = received_connections.get_mut(&packet.addr)
                                 {
                                     if connection.tcp_stream.write(&packet.payload).is_err() {
