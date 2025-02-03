@@ -42,23 +42,33 @@ impl Packet {
             ty: PacketType::Barrier,
         }
     }
+
+    pub fn addr(&self) -> &SocketAddr {
+        &self.addr
+    }
+
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
 }
 
 pub struct PacketSender {
     packet_sender: Sender<Packet>,
-    timeframe: u32,
+    timeframe: Arc<AtomicU32>,
 }
 
 impl PacketSender {
-    fn new(packet_sender: Sender<Packet>) -> Self {
+    fn new(packet_sender: Sender<Packet>, timeframe: Arc<AtomicU32>) -> Self {
         Self {
             packet_sender,
-            timeframe: 0,
+            timeframe,
         }
     }
 
     pub fn send_unreliable(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
-        payload.append(&mut bytemuck::bytes_of(&self.timeframe).to_vec());
+        let timeframe = self.timeframe.load(Ordering::SeqCst);
+
+        payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::unreliable(addr, payload);
 
         self.packet_sender.try_send(packet)?;
@@ -66,9 +76,9 @@ impl PacketSender {
     }
 
     pub fn send_barrier(&mut self, addr: SocketAddr) -> Result<()> {
-        self.timeframe += 1;
+        let timeframe = self.timeframe.fetch_add(1, Ordering::SeqCst) + 1;
 
-        let payload = bytemuck::bytes_of(&self.timeframe).to_vec();
+        let payload = bytemuck::bytes_of(&timeframe).to_vec();
         let packet = Packet::barrier(addr, payload);
 
         self.packet_sender.try_send(packet)?;
@@ -108,7 +118,6 @@ impl Socket {
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
         if addr.ip() != IpAddr::from_str("0.0.0.0").unwrap() {
-            println!("Will attempt to connect to {:?}", addr);
             let connect_addr = addr;
             let connect_established_connection = established_connection.clone();
             let connect_event_sender = event_sender.clone();
@@ -155,13 +164,25 @@ impl Socket {
             })
             .unwrap();
 
+        let receive_unreliable_packets_timeframe = timeframe.clone();
+        let receive_unreliable_packets_event_sender = event_sender.clone();
+        thread::Builder::new()
+            .name("Unreliable - Receive Unreliable Packets".to_owned())
+            .spawn(move || {
+                Self::receive_unreliable_packets(
+                    receive_unreliable_packets_timeframe,
+                    receive_unreliable_packets_event_sender,
+                )
+            })
+            .unwrap();
+
         let listen_port = addr.port();
         thread::Builder::new()
             .name("Unreliable - Listen".to_owned())
             .spawn(move || Self::listen(listen_port, received_connections, event_sender).unwrap())
             .unwrap();
 
-        let packet_sender = PacketSender::new(packet_sender);
+        let packet_sender = PacketSender::new(packet_sender, timeframe);
 
         Ok(Self {
             packet_sender,
@@ -253,7 +274,6 @@ impl Socket {
                             }
                             // Barriers go over tcp
                             PacketType::Barrier => {
-                                println!("SEND BARRIER");
                                 if let Some(connection) = received_connections.get_mut(&packet.addr)
                                 {
                                     if connection.tcp_stream.write(&packet.payload).is_err() {
@@ -280,6 +300,33 @@ impl Socket {
         }
     }
 
+    fn receive_unreliable_packets(
+        timeframe: Arc<AtomicU32>,
+        event_sender: Sender<SocketEvent>,
+    ) -> Result<()> {
+        let udp_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+
+        let mut buf = vec![0u8; u16::MAX as usize];
+
+        loop {
+            if let Ok((len, src)) = udp_socket.recv_from(&mut buf) {
+                let packet_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
+
+                if packet_timeframe == timeframe.load(Ordering::SeqCst) {
+                    let packet = Packet {
+                        addr: src,
+                        payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
+                        ty: PacketType::Unreliable,
+                    };
+
+                    event_sender.try_send(SocketEvent::Packet(packet))?;
+                }
+            }
+
+            thread::yield_now();
+        }
+    }
+
     fn receive_barrier(connection: &mut Connection, timeframe: &Arc<AtomicU32>) {
         let mut buf = [0u8; 4];
         if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
@@ -287,7 +334,6 @@ impl Socket {
                 if let Ok(_len) = connection.tcp_stream.read(&mut buf) {
                     let barrier_timeframe = *bytemuck::from_bytes::<u32>(buf.as_ref());
                     timeframe.store(barrier_timeframe, Ordering::SeqCst);
-                    println!("Barrier: {}!", barrier_timeframe);
                 }
             }
         }
