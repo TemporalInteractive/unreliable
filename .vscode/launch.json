@@ -1,0 +1,55 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Client",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/client.exe",
+            "args": [
+            ],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
+        },
+        {
+            "name": "Server",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/server.exe",
+            "args": [
+            ],
+           "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
+        },
+        {
+            "name": "Client Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/release/client.exe",
+            "args": [
+            ],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build -r"
+        },
+        {
+            "name": "Server Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/release/server.exe",
+            "args": [
+            ],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build -r"
+        },
+    ],
+    "compounds": [
+        {
+            "name": "Client/Server",
+            "configurations": ["Client", "Server"]
+        },
+        {
+            "name": "Client/Server Release",
+            "configurations": ["Client Release", "Server Release"]
+        }
+    ],
+}

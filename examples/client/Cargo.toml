@@ -1,0 +1,15 @@
+[package]
+name = "client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Common example code"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+unreliable.workspace = true

@@ -1,8 +1,32 @@
-[package]
-name = "unreliable"
-version = "0.1.0"
+[workspace.package]
+authors = ["Jason de Wolff <jason.dewolff@temporalinteractive.com>"]
 edition = "2021"
+homepage = "https://github.com/TemporalInteractive/unreliable"
+keywords = ["networking"]
+license = "MIT"
+name = "unreliable"
+rust-version = "1.83"
+repository = "https://github.com/TemporalInteractive/unreliable"
+version = "0.1.0"
 
-[dependencies]
+[workspace.dependencies]
+unreliable = { version = "0.1.0", path = "unreliable" }
+
 anyhow = "1.0.95"
 bytemuck = "1.0.0"
+crossbeam-channel = "0.5"
+image = "0.25.5"
+rayon = "1.0.0"
+turbojpeg = "1.2.1"
+
+[profile.release]
+lto = true
+panic = "abort"
+codegen-units = 1
+
+[workspace]
+members = [
+    "examples/server",
+    "examples/client",
+]
+resolver = "2"
