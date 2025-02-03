@@ -295,14 +295,14 @@ impl Socket {
                             PacketType::Barrier => {
                                 if let Some(connection) = received_connections.get_mut(&packet.addr)
                                 {
-                                    if connection.tcp_stream.write(&packet.payload).is_err() {
+                                    if connection.tcp_stream.write_all(&packet.payload).is_err() {
                                         received_connections.remove(&packet.addr);
                                         event_sender
                                             .try_send(SocketEvent::Disconnect(packet.addr))?;
                                     }
                                 } else if let Some(connection) = established_connection.as_mut() {
                                     if connection.tcp_stream.peer_addr()? == packet.addr
-                                        && connection.tcp_stream.write(&packet.payload).is_err()
+                                        && connection.tcp_stream.write_all(&packet.payload).is_err()
                                     {
                                         *established_connection = None;
                                         event_sender
