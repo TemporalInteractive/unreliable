@@ -75,7 +75,7 @@ impl PacketSender {
     }
 
     pub fn send_unreliable(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
-        let timeframe = self.timeframe.load(Ordering::SeqCst);
+        let timeframe = self.timeframe.load(Ordering::Relaxed);
 
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::unreliable(addr, payload);
@@ -85,7 +85,7 @@ impl PacketSender {
     }
 
     pub fn send_barrier(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
-        let timeframe = self.timeframe.load(Ordering::SeqCst);
+        let timeframe = self.timeframe.load(Ordering::Relaxed);
 
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::barrier(addr, payload);
@@ -333,7 +333,7 @@ impl Socket {
             if let Ok((len, src)) = udp_socket.recv_from(&mut buf) {
                 let packet_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
 
-                if packet_timeframe == timeframe.load(Ordering::SeqCst) {
+                if packet_timeframe == timeframe.load(Ordering::Relaxed) {
                     let packet = Packet {
                         addr: src,
                         payload: buf[0..len].to_vec().into_boxed_slice(),
@@ -357,7 +357,7 @@ impl Socket {
         if let Ok(len) = connection.tcp_stream.read(buf) {
             if len >= 4 {
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
-                timeframe.store(barrier_timeframe, Ordering::SeqCst);
+                timeframe.store(barrier_timeframe, Ordering::Relaxed);
 
                 let packet = Packet {
                     addr: connection.tcp_stream.peer_addr().unwrap(),
