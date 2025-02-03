@@ -3,7 +3,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use unreliable::*;
 
 fn main() {
-    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 2343));
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 2344));
 
     let mut socket = Socket::new(addr).unwrap();
 

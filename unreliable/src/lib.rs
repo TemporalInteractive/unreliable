@@ -81,17 +81,12 @@ pub enum SocketEvent {
 }
 
 struct Connection {
-    udp_socket: UdpSocket,
     tcp_stream: TcpStream,
 }
 
 impl Connection {
     fn new(tcp_stream: TcpStream) -> Self {
-        let udp_socket = UdpSocket::bind(tcp_stream.peer_addr().unwrap()).unwrap();
-        Self {
-            udp_socket,
-            tcp_stream,
-        }
+        Self { tcp_stream }
     }
 }
 
@@ -177,6 +172,8 @@ impl Socket {
     }
 
     fn poll(packet_receiver: Receiver<Packet>, event_sender: Sender<SocketEvent>) {
+        let udp_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+
         loop {
             // DO STUFF
         }

@@ -15,9 +15,7 @@ unreliable = { version = "0.1.0", path = "unreliable" }
 anyhow = "1.0.95"
 bytemuck = "1.0.0"
 crossbeam-channel = "0.5"
-image = "0.25.5"
 rayon = "1.0.0"
-turbojpeg = "1.2.1"
 
 [profile.release]
 lto = true
