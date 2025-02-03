@@ -352,10 +352,9 @@ impl Socket {
         connection: &mut Connection,
         timeframe: &Arc<AtomicU32>,
         event_sender: &mut Sender<SocketEvent>,
+        buf: &mut [u8],
     ) -> Result<()> {
-        let mut buf = vec![0u8; u16::MAX as usize];
-
-        if let Ok(len) = connection.tcp_stream.read(&mut buf) {
+        if let Ok(len) = connection.tcp_stream.read(buf) {
             if len >= 4 {
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
                 timeframe.store(barrier_timeframe, Ordering::SeqCst);
@@ -379,16 +378,18 @@ impl Socket {
         established_connection: Arc<Mutex<Option<Connection>>>,
         mut event_sender: Sender<SocketEvent>,
     ) -> Result<()> {
+        let mut buf = vec![0u8; u16::MAX as usize];
+
         loop {
             if let Ok(mut received_connections) = received_connections.lock() {
                 for connection in received_connections.values_mut() {
-                    Self::receive_barrier(connection, &timeframe, &mut event_sender)?;
+                    Self::receive_barrier(connection, &timeframe, &mut event_sender, &mut buf)?;
                 }
             }
 
             if let Ok(mut established_connection) = established_connection.lock() {
                 if let Some(connection) = established_connection.as_mut() {
-                    Self::receive_barrier(connection, &timeframe, &mut event_sender)?;
+                    Self::receive_barrier(connection, &timeframe, &mut event_sender, &mut buf)?;
                 }
             }
 
