@@ -344,16 +344,17 @@ impl Socket {
         timeframe: &Arc<AtomicU32>,
         event_sender: &mut Sender<SocketEvent>,
     ) -> Result<()> {
-        let mut buf = [0u8; 4];
+        let mut buf = vec![0u8; u16::MAX as usize];
+
         if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
             if len > 0 {
                 if let Ok(_len) = connection.tcp_stream.read(&mut buf) {
-                    let barrier_timeframe = *bytemuck::from_bytes::<u32>(buf.as_ref());
+                    let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
                     timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
                     let packet = Packet {
                         addr: connection.tcp_stream.peer_addr().unwrap(),
-                        payload: Box::new(buf),
+                        payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
                         ty: PacketType::Barrier,
                     };
 
