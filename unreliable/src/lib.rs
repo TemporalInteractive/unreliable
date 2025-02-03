@@ -327,7 +327,7 @@ impl Socket {
                 if packet_timeframe == timeframe.load(Ordering::SeqCst) {
                     let packet = Packet {
                         addr: src,
-                        payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
+                        payload: buf[0..len].to_vec().into_boxed_slice(),
                         ty: PacketType::Unreliable,
                     };
 
@@ -346,22 +346,18 @@ impl Socket {
     ) -> Result<()> {
         let mut buf = vec![0u8; u16::MAX as usize];
 
-        //if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
-        //    if len > 0 {
         if let Ok(len) = connection.tcp_stream.read(&mut buf) {
             let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
             timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
             let packet = Packet {
                 addr: connection.tcp_stream.peer_addr().unwrap(),
-                payload: buf[0..(len - 4)].to_vec().into_boxed_slice(),
+                payload: buf[0..len].to_vec().into_boxed_slice(),
                 ty: PacketType::Barrier,
             };
 
             event_sender.try_send(SocketEvent::Packet(packet))?;
         }
-        //}
-        //}
 
         Ok(())
     }
