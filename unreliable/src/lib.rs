@@ -176,12 +176,14 @@ impl Socket {
             })
             .unwrap();
 
+        let receive_unreliable_packets_port = addr.port();
         let receive_unreliable_packets_timeframe = timeframe.clone();
         let receive_unreliable_packets_event_sender = event_sender.clone();
         thread::Builder::new()
             .name("Unreliable - Receive Unreliable Packets".to_owned())
             .spawn(move || {
                 Self::receive_unreliable_packets(
+                    receive_unreliable_packets_port,
                     receive_unreliable_packets_timeframe,
                     receive_unreliable_packets_event_sender,
                 )
@@ -318,10 +320,12 @@ impl Socket {
     }
 
     fn receive_unreliable_packets(
+        port: u16,
         timeframe: Arc<AtomicU32>,
         event_sender: Sender<SocketEvent>,
     ) -> Result<()> {
-        let udp_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let udp_socket =
+            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port)).unwrap();
 
         let mut buf = vec![0u8; u16::MAX as usize];
 
