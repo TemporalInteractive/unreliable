@@ -15,7 +15,8 @@ use std::{
     thread,
 };
 
-pub enum PacketType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PacketType {
     Unreliable,
     Barrier,
 }
@@ -53,6 +54,10 @@ impl Packet {
 
     pub fn timeframe(&self) -> u32 {
         *bytemuck::from_bytes::<u32>(&self.payload[(self.payload.len() - 4)..self.payload.len()])
+    }
+
+    pub fn is_barrier(&self) -> bool {
+        self.ty == PacketType::Barrier
     }
 }
 
