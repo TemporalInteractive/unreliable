@@ -13,6 +13,7 @@ fn main() {
                 SocketEvent::Packet(packet) => {}
                 SocketEvent::Connect(addr) => {
                     println!("Connect: {:?}", addr);
+                    socket.packet_sender().send_barrier(addr).unwrap();
                 }
                 SocketEvent::Disconnect(addr) => {
                     println!("Disconnect: {:?}", addr);
