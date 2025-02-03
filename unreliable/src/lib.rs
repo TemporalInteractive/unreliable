@@ -355,7 +355,7 @@ impl Socket {
         buf: &mut [u8],
     ) -> Result<()> {
         if let Ok(len) = connection.tcp_stream.read(buf) {
-            if len >= 4 {
+            if len > 0 {
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
                 timeframe.store(barrier_timeframe, Ordering::Relaxed);
 
