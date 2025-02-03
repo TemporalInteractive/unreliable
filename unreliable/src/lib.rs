@@ -13,6 +13,7 @@ use std::{
     net::{TcpListener, TcpStream, UdpSocket},
     sync::{Arc, Mutex},
     thread,
+    time::SystemTime,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +21,8 @@ enum PacketType {
     Unreliable,
     Barrier,
 }
+
+pub const MAX_PACKET_PAYLOAD_SIZE: usize = 65527;
 
 pub struct Packet {
     addr: SocketAddr,
@@ -274,7 +277,7 @@ impl Socket {
             if let Ok(mut received_connections) = received_connections.lock() {
                 if let Ok(mut established_connection) = established_connection.lock() {
                     // Receive a packet to send out to an address
-                    if let Ok(packet) = packet_receiver.try_recv() {
+                    while let Ok(packet) = packet_receiver.try_recv() {
                         match packet.ty {
                             // Unreliable packets go over udp
                             PacketType::Unreliable => {
