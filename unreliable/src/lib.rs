@@ -1,13 +1,15 @@
 use anyhow::Result;
 use core::{
     clone::Clone,
-    convert::From,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
+    sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 use crossbeam_channel::{Receiver, Sender};
 use std::{
+    collections::HashMap,
+    io::{Read, Write},
     net::{TcpListener, TcpStream, UdpSocket},
     sync::{Arc, Mutex},
     thread,
@@ -91,16 +93,15 @@ impl Connection {
 }
 
 pub struct Socket {
-    addr: SocketAddr,
-
     packet_sender: PacketSender,
     event_receiver: Receiver<SocketEvent>,
 }
 
 impl Socket {
     pub fn new(addr: SocketAddr) -> Result<Self> {
-        let received_connections = Arc::new(Mutex::new(Vec::new()));
+        let received_connections = Arc::new(Mutex::new(HashMap::new()));
         let established_connection = Arc::new(Mutex::new(None));
+        let timeframe = Arc::new(AtomicU32::new(0));
 
         let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
@@ -108,11 +109,39 @@ impl Socket {
         if addr.ip() != IpAddr::from_str("0.0.0.0").unwrap() {
             println!("Will attempt to connect to {:?}", addr);
             let connect_addr = addr;
-            thread::spawn(move || Self::connect(connect_addr, established_connection));
+            let connect_established_connection = established_connection.clone();
+            let connect_event_sender = event_sender.clone();
+            thread::spawn(move || {
+                Self::connect(
+                    connect_addr,
+                    connect_established_connection,
+                    connect_event_sender,
+                )
+            });
         }
 
-        let poll_event_sender = event_sender.clone();
-        thread::spawn(move || Self::poll(packet_receiver, poll_event_sender));
+        let send_packets_event_sender = event_sender.clone();
+        let send_packets_received_connections = received_connections.clone();
+        let send_packets_established_connection = established_connection.clone();
+        thread::spawn(move || {
+            Self::send_packets(
+                packet_receiver,
+                send_packets_event_sender,
+                send_packets_received_connections,
+                send_packets_established_connection,
+            )
+        });
+
+        let receive_barriers_timeframe = timeframe.clone();
+        let receive_barriers_received_connections = received_connections.clone();
+        let receive_barriers_established_connection = established_connection.clone();
+        thread::spawn(move || {
+            Self::receive_barriers(
+                receive_barriers_timeframe,
+                receive_barriers_received_connections,
+                receive_barriers_established_connection,
+            )
+        });
 
         let listen_port = addr.port();
         thread::spawn(move || Self::listen(listen_port, received_connections, event_sender));
@@ -120,7 +149,6 @@ impl Socket {
         let packet_sender = PacketSender::new(packet_sender);
 
         Ok(Self {
-            addr,
             packet_sender,
             event_receiver,
         })
@@ -135,25 +163,30 @@ impl Socket {
     }
 
     // Try to connect to our target address
-    fn connect(addr: SocketAddr, established_connection: Arc<Mutex<Option<Connection>>>) {
+    fn connect(
+        addr: SocketAddr,
+        established_connection: Arc<Mutex<Option<Connection>>>,
+        event_sender: Sender<SocketEvent>,
+    ) -> Result<()> {
         loop {
             if let Ok(mut connection) = established_connection.lock() {
                 if connection.is_none() {
                     // Try to connect if we're not connected yet
                     if let Ok(tcp_stream) = TcpStream::connect(addr) {
                         *connection = Some(Connection::new(tcp_stream));
+                        event_sender.try_send(SocketEvent::Connect(addr))?;
                     }
                 }
             }
 
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(100));
         }
     }
 
     // Listen and accept any incoming connections
     fn listen(
         port: u16,
-        received_connections: Arc<Mutex<Vec<Connection>>>,
+        received_connections: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
         event_sender: Sender<SocketEvent>,
     ) -> Result<()> {
         let tcp_listener =
@@ -162,7 +195,7 @@ impl Socket {
         for stream in tcp_listener.incoming().flatten() {
             if let Ok(mut received_connections) = received_connections.lock() {
                 let peer_addr = stream.peer_addr()?;
-                received_connections.push(Connection::new(stream));
+                received_connections.insert(peer_addr, Connection::new(stream));
 
                 event_sender.try_send(SocketEvent::Connect(peer_addr))?;
             }
@@ -171,11 +204,95 @@ impl Socket {
         Ok(())
     }
 
-    fn poll(packet_receiver: Receiver<Packet>, event_sender: Sender<SocketEvent>) {
+    fn send_packets(
+        packet_receiver: Receiver<Packet>,
+        event_sender: Sender<SocketEvent>,
+        received_connections: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
+        established_connection: Arc<Mutex<Option<Connection>>>,
+    ) -> Result<()> {
         let udp_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
 
         loop {
-            // DO STUFF
+            if let Ok(mut received_connections) = received_connections.lock() {
+                if let Ok(mut established_connection) = established_connection.lock() {
+                    // Receive a packet to send out to an address
+                    if let Ok(packet) = packet_receiver.try_recv() {
+                        match packet.ty {
+                            // Unreliable packets go over udp
+                            PacketType::Unreliable => {
+                                if udp_socket.send_to(&packet.payload, packet.addr).is_err() {
+                                    if received_connections.remove(&packet.addr).is_some() {
+                                        event_sender
+                                            .try_send(SocketEvent::Disconnect(packet.addr))?;
+                                    }
+
+                                    if let Some(connection) = established_connection.as_ref() {
+                                        if connection.tcp_stream.peer_addr()? == packet.addr {
+                                            *established_connection = None;
+                                        }
+                                    }
+                                }
+                            }
+                            // Barriers go over tcp
+                            PacketType::Barrier => {
+                                if let Some(connection) = received_connections.get_mut(&packet.addr)
+                                {
+                                    if connection.tcp_stream.write(&packet.payload).is_err() {
+                                        received_connections.remove(&packet.addr);
+                                        event_sender
+                                            .try_send(SocketEvent::Disconnect(packet.addr))?;
+                                    }
+                                } else if let Some(connection) = established_connection.as_mut() {
+                                    if connection.tcp_stream.peer_addr()? == packet.addr
+                                        && connection.tcp_stream.write(&packet.payload).is_err()
+                                    {
+                                        *established_connection = None;
+                                        event_sender
+                                            .try_send(SocketEvent::Disconnect(packet.addr))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            thread::yield_now();
+        }
+    }
+
+    fn receive_barrier(connection: &mut Connection, timeframe: &Arc<AtomicU32>) {
+        let mut buf = [0u8; 4];
+        if let Ok(len) = connection.tcp_stream.peek(&mut buf) {
+            if len > 0 {
+                if let Ok(_len) = connection.tcp_stream.read(&mut buf) {
+                    let barrier_timeframe = *bytemuck::from_bytes::<u32>(buf.as_ref());
+                    timeframe.store(barrier_timeframe, Ordering::SeqCst);
+                    println!("Barrier: {}!", barrier_timeframe);
+                }
+            }
+        }
+    }
+
+    fn receive_barriers(
+        timeframe: Arc<AtomicU32>,
+        received_connections: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
+        established_connection: Arc<Mutex<Option<Connection>>>,
+    ) {
+        loop {
+            if let Ok(mut received_connections) = received_connections.lock() {
+                for connection in received_connections.values_mut() {
+                    Self::receive_barrier(connection, &timeframe);
+                }
+            }
+
+            if let Ok(mut established_connection) = established_connection.lock() {
+                if let Some(connection) = established_connection.as_mut() {
+                    Self::receive_barrier(connection, &timeframe);
+                }
+            }
+
+            thread::yield_now();
         }
     }
 }
