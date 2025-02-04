@@ -77,7 +77,7 @@ impl PacketSender {
     }
 
     pub fn send_unreliable(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
-        let timeframe = self.timeframe.load(Ordering::Relaxed);
+        let timeframe = self.timeframe.load(Ordering::SeqCst);
 
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::unreliable(addr, payload);
@@ -87,7 +87,7 @@ impl PacketSender {
     }
 
     pub fn send_barrier(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
-        let timeframe = self.timeframe.load(Ordering::Relaxed);
+        let timeframe = self.timeframe.load(Ordering::SeqCst);
 
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::barrier(addr, payload);
@@ -299,14 +299,14 @@ impl Socket {
                             PacketType::Barrier => {
                                 if let Some(connection) = received_connections.get_mut(&packet.addr)
                                 {
-                                    if connection.tcp_stream.write_all(&packet.payload).is_err() {
+                                    if connection.tcp_stream.write(&packet.payload).is_err() {
                                         received_connections.remove(&packet.addr);
                                         event_sender
                                             .try_send(SocketEvent::Disconnect(packet.addr))?;
                                     }
                                 } else if let Some(connection) = established_connection.as_mut() {
                                     if connection.tcp_stream.peer_addr()? == packet.addr
-                                        && connection.tcp_stream.write_all(&packet.payload).is_err()
+                                        && connection.tcp_stream.write(&packet.payload).is_err()
                                     {
                                         *established_connection = None;
                                         event_sender
@@ -337,7 +337,7 @@ impl Socket {
             if let Ok((len, src)) = udp_socket.recv_from(&mut buf) {
                 let packet_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
 
-                if packet_timeframe == timeframe.load(Ordering::Relaxed) {
+                if packet_timeframe == timeframe.load(Ordering::SeqCst) {
                     let packet = Packet {
                         addr: src,
                         payload: buf[0..len].to_vec().into_boxed_slice(),
@@ -362,11 +362,11 @@ impl Socket {
             if len > 0 {
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
 
-                if barrier_timeframe < timeframe.load(Ordering::Relaxed) {
+                if barrier_timeframe < timeframe.load(Ordering::SeqCst) {
                     panic!("Barriers can only increase over time.");
                 }
 
-                timeframe.store(barrier_timeframe, Ordering::Relaxed);
+                timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
                 let packet = Packet {
                     addr: connection.tcp_stream.peer_addr().unwrap(),
