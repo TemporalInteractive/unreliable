@@ -398,7 +398,8 @@ impl Socket {
 
                     event_sender.try_send(SocketEvent::Packet(packet))?;
 
-                    offset += len;
+                    // Don't forget the 4 extra bytes from the len itself
+                    offset += len + 4;
                 }
             }
         }
