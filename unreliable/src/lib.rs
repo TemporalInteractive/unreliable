@@ -386,7 +386,7 @@ impl Socket {
                     timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
                     // Read payload, timeframe is included
-                    let payload = buf[(offset + 4)..(offset + len)]
+                    let payload = buf[(offset + 4)..(offset + len + 4)]
                         .to_vec()
                         .into_boxed_slice();
 
