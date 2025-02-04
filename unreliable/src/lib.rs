@@ -13,7 +13,6 @@ use std::{
     net::{TcpListener, TcpStream, UdpSocket},
     sync::{Arc, Mutex},
     thread,
-    time::SystemTime,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
