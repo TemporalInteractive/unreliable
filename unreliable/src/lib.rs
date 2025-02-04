@@ -368,27 +368,25 @@ impl Socket {
     ) -> Result<()> {
         if let Ok(total_len) = connection.tcp_stream.read(buf) {
             if total_len > 0 {
-                let mut offset = 0;
+                let mut reader = 0;
 
                 // Read all packets
-                while offset < total_len {
+                while reader < total_len {
                     // Receive packet length as TCP doesn't preserve boundries
-                    let len = *bytemuck::from_bytes::<u32>(&buf[offset..(offset + 4)]) as usize;
+                    let len = *bytemuck::from_bytes::<u32>(&buf[reader..(reader + 4)]) as usize;
+                    reader += 4;
 
                     // Read barrier timeframe from end of packet
                     let barrier_timeframe =
-                        *bytemuck::from_bytes::<u32>(&buf[(offset + len - 4)..(offset + len)]);
-
+                        *bytemuck::from_bytes::<u32>(&buf[(reader + len - 4)..(reader + len)]);
                     if barrier_timeframe < timeframe.load(Ordering::SeqCst) {
                         panic!("Barriers can only increase over time.");
                     }
-
                     timeframe.store(barrier_timeframe, Ordering::SeqCst);
 
                     // Read payload, timeframe is included
-                    let payload = buf[(offset + 4)..(offset + len + 4)]
-                        .to_vec()
-                        .into_boxed_slice();
+                    let payload = buf[reader..(reader + len)].to_vec().into_boxed_slice();
+                    reader += len;
 
                     let packet = Packet {
                         addr: connection.tcp_stream.peer_addr().unwrap(),
@@ -397,9 +395,6 @@ impl Socket {
                     };
 
                     event_sender.try_send(SocketEvent::Packet(packet))?;
-
-                    // Don't forget the 4 extra bytes from the len itself
-                    offset += len + 4;
                 }
             }
         }
