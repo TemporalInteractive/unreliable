@@ -146,6 +146,7 @@ impl Socket {
                 .unwrap();
         }
 
+        let send_packets_port = addr.port();
         let send_packets_event_sender = event_sender.clone();
         let send_packets_received_connections = received_connections.clone();
         let send_packets_established_connection = established_connection.clone();
@@ -153,6 +154,7 @@ impl Socket {
             .name("Unreliable - Send Packets".to_owned())
             .spawn(move || {
                 Self::send_packets(
+                    send_packets_port,
                     packet_receiver,
                     send_packets_event_sender,
                     send_packets_received_connections,
@@ -265,6 +267,7 @@ impl Socket {
     }
 
     fn send_packets(
+        port: u16,
         packet_receiver: Receiver<Packet>,
         event_sender: Sender<SocketEvent>,
         received_connections: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
@@ -276,7 +279,10 @@ impl Socket {
             if let Ok(mut received_connections) = received_connections.lock() {
                 if let Ok(mut established_connection) = established_connection.lock() {
                     // Receive a packet to send out to an address
-                    while let Ok(packet) = packet_receiver.try_recv() {
+                    while let Ok(mut packet) = packet_receiver.try_recv() {
+                        // Port can change for the receiving end depending on driver settings
+                        packet.addr.set_port(port);
+
                         match packet.ty {
                             // Unreliable packets go over udp
                             PacketType::Unreliable => {
