@@ -98,7 +98,7 @@ impl PacketSender {
         final_payload.append(&mut bytemuck::bytes_of(&(payload.len() as u32)).to_vec());
         final_payload.append(&mut payload);
 
-        let packet = Packet::barrier(addr, payload);
+        let packet = Packet::barrier(addr, final_payload);
 
         self.packet_sender.try_send(packet)?;
         Ok(())
