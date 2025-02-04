@@ -366,26 +366,40 @@ impl Socket {
         event_sender: &mut Sender<SocketEvent>,
         buf: &mut [u8],
     ) -> Result<()> {
-        if let Ok(len) = connection.tcp_stream.read(buf) {
-            if len > 0 {
-                // Receive packet length as TCP doesn't preserve boundries
-                let len = *bytemuck::from_bytes::<u32>(&buf[0..4]) as usize;
+        if let Ok(total_len) = connection.tcp_stream.read(buf) {
+            if total_len > 0 {
+                let mut offset = 0;
 
-                let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
+                // Read all packets
+                while offset < total_len {
+                    // Receive packet length as TCP doesn't preserve boundries
+                    let len = *bytemuck::from_bytes::<u32>(&buf[offset..(offset + 4)]) as usize;
 
-                if barrier_timeframe < timeframe.load(Ordering::SeqCst) {
-                    panic!("Barriers can only increase over time.");
+                    // Read barrier timeframe from end of packet
+                    let barrier_timeframe =
+                        *bytemuck::from_bytes::<u32>(&buf[(offset + len - 4)..(offset + len)]);
+
+                    if barrier_timeframe < timeframe.load(Ordering::SeqCst) {
+                        panic!("Barriers can only increase over time.");
+                    }
+
+                    timeframe.store(barrier_timeframe, Ordering::SeqCst);
+
+                    // Read payload, timeframe is included
+                    let payload = buf[(offset + 4)..(offset + len)]
+                        .to_vec()
+                        .into_boxed_slice();
+
+                    let packet = Packet {
+                        addr: connection.tcp_stream.peer_addr().unwrap(),
+                        payload,
+                        ty: PacketType::Barrier,
+                    };
+
+                    event_sender.try_send(SocketEvent::Packet(packet))?;
+
+                    offset += len;
                 }
-
-                timeframe.store(barrier_timeframe, Ordering::SeqCst);
-
-                let packet = Packet {
-                    addr: connection.tcp_stream.peer_addr().unwrap(),
-                    payload: buf[4..len].to_vec().into_boxed_slice(),
-                    ty: PacketType::Barrier,
-                };
-
-                event_sender.try_send(SocketEvent::Packet(packet))?;
             }
         }
 
