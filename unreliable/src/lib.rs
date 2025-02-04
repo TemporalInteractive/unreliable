@@ -79,6 +79,8 @@ impl PacketSender {
     pub fn send_unreliable(&mut self, addr: SocketAddr, mut payload: Vec<u8>) -> Result<()> {
         let timeframe = self.timeframe.load(Ordering::SeqCst);
 
+        // Timeframe is added to the end of the message
+        // This will hopefully avoid any big allocations as vectors allocate a bit more than they actually use
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
         let packet = Packet::unreliable(addr, payload);
 
@@ -90,6 +92,12 @@ impl PacketSender {
         let timeframe = self.timeframe.load(Ordering::SeqCst);
 
         payload.append(&mut bytemuck::bytes_of(&timeframe).to_vec());
+
+        let mut final_payload = Vec::with_capacity(payload.len() + 4);
+        // Add payload length to the start of the message, as udp doesn't preserve message boundries
+        final_payload.append(&mut bytemuck::bytes_of(&(payload.len() as u32)).to_vec());
+        final_payload.append(&mut payload);
+
         let packet = Packet::barrier(addr, payload);
 
         self.packet_sender.try_send(packet)?;
@@ -360,6 +368,9 @@ impl Socket {
     ) -> Result<()> {
         if let Ok(len) = connection.tcp_stream.read(buf) {
             if len > 0 {
+                // Receive packet length as TCP doesn't preserve boundries
+                let len = *bytemuck::from_bytes::<u32>(&buf[0..4]) as usize;
+
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
 
                 if barrier_timeframe < timeframe.load(Ordering::SeqCst) {
@@ -370,7 +381,7 @@ impl Socket {
 
                 let packet = Packet {
                     addr: connection.tcp_stream.peer_addr().unwrap(),
-                    payload: buf[0..len].to_vec().into_boxed_slice(),
+                    payload: buf[4..len].to_vec().into_boxed_slice(),
                     ty: PacketType::Barrier,
                 };
 
