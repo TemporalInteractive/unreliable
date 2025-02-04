@@ -361,6 +361,11 @@ impl Socket {
         if let Ok(len) = connection.tcp_stream.read(buf) {
             if len > 0 {
                 let barrier_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
+
+                if barrier_timeframe < timeframe.load(Ordering::Relaxed) {
+                    panic!("Barriers can only increase over time.");
+                }
+
                 timeframe.store(barrier_timeframe, Ordering::Relaxed);
 
                 let packet = Packet {
