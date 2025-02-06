@@ -4,7 +4,6 @@ edition = "2021"
 homepage = "https://github.com/TemporalInteractive/unreliable"
 keywords = ["networking"]
 license = "MIT"
-name = "unreliable"
 rust-version = "1.83"
 repository = "https://github.com/TemporalInteractive/unreliable"
 version = "0.1.0"
