@@ -2,7 +2,6 @@ use anyhow::Result;
 use core::{
     clone::Clone,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    str::FromStr,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
@@ -129,7 +128,7 @@ pub struct Socket {
 }
 
 impl Socket {
-    pub fn new(addr: SocketAddr) -> Result<Self> {
+    pub fn new(connect_addr: Option<SocketAddr>, receive_port: u16) -> Result<Self> {
         let received_connections = Arc::new(Mutex::new(HashMap::new()));
         let established_connection = Arc::new(Mutex::new(None));
         let timeframe = Arc::new(AtomicU32::new(0));
@@ -137,8 +136,7 @@ impl Socket {
         let (packet_sender, packet_receiver) = crossbeam_channel::unbounded();
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
-        if addr.ip() != IpAddr::from_str("0.0.0.0").unwrap() {
-            let connect_addr = addr;
+        if let Some(connect_addr) = connect_addr {
             let connect_established_connection = established_connection.clone();
             let connect_event_sender = event_sender.clone();
             thread::Builder::new()
@@ -186,7 +184,7 @@ impl Socket {
             })
             .unwrap();
 
-        let receive_unreliable_packets_port = addr.port();
+        let receive_unreliable_packets_port = receive_port;
         let receive_unreliable_packets_timeframe = timeframe.clone();
         let receive_unreliable_packets_event_sender = event_sender.clone();
         thread::Builder::new()
@@ -200,7 +198,7 @@ impl Socket {
             })
             .unwrap();
 
-        let listen_port = addr.port();
+        let listen_port = receive_port;
         thread::Builder::new()
             .name("Unreliable - Listen".to_owned())
             .spawn(move || Self::listen(listen_port, received_connections, event_sender).unwrap())
@@ -262,8 +260,7 @@ impl Socket {
 
         for stream in tcp_listener.incoming().flatten() {
             if let Ok(mut received_connections) = received_connections.lock() {
-                let mut peer_addr = stream.peer_addr()?;
-                peer_addr.set_port(port);
+                let peer_addr = stream.peer_addr()?;
 
                 received_connections.insert(peer_addr, Connection::new(stream));
 
