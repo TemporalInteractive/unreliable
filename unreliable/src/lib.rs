@@ -105,7 +105,7 @@ impl PacketSender {
 }
 
 pub enum SocketEvent {
-    Packet(Packet),
+    Packet(Packet, u32),
     Connect(SocketAddr),
     Disconnect(SocketAddr),
 }
@@ -342,15 +342,15 @@ impl Socket {
             if let Ok((len, src)) = udp_socket.recv_from(&mut buf) {
                 let packet_timeframe = *bytemuck::from_bytes::<u32>(&buf[(len - 4)..len]);
 
-                if packet_timeframe == timeframe.load(Ordering::SeqCst) {
-                    let packet = Packet {
-                        addr: src,
-                        payload: buf[0..len].to_vec().into_boxed_slice(),
-                        ty: PacketType::Unreliable,
-                    };
+                let delay = timeframe.load(Ordering::SeqCst) - packet_timeframe;
 
-                    event_sender.try_send(SocketEvent::Packet(packet))?;
-                }
+                let packet = Packet {
+                    addr: src,
+                    payload: buf[0..len].to_vec().into_boxed_slice(),
+                    ty: PacketType::Unreliable,
+                };
+
+                event_sender.try_send(SocketEvent::Packet(packet, delay))?;
             }
 
             thread::yield_now();
@@ -391,7 +391,7 @@ impl Socket {
                         ty: PacketType::Barrier,
                     };
 
-                    event_sender.try_send(SocketEvent::Packet(packet))?;
+                    event_sender.try_send(SocketEvent::Packet(packet, 0))?;
                 }
             }
         }
